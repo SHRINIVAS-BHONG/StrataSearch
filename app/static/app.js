@@ -71,22 +71,22 @@
       toast.className = `strata-toast ${type}`;
 
       const iconMap = {
-        success: '✓',
-        error: '✕',
-        warning: '⚠',
-        info: 'ℹ'
+        success: '<svg class="toast-icon-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 11 8 15 16 6"/></svg>',
+        error: '<svg class="toast-icon-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="5" x2="15" y2="15"/><line x1="15" y1="5" x2="5" y2="15"/></svg>',
+        warning: '<svg class="toast-icon-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3L2 17h16L10 3z"/><line x1="10" y1="8" x2="10" y2="12"/><line x1="10" y1="15" x2="10.01" y2="15"/></svg>',
+        info: '<svg class="toast-icon-svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="8"/><line x1="10" y1="9" x2="10" y2="15"/><line x1="10" y1="6" x2="10.01" y2="6"/></svg>'
       };
 
       toast.innerHTML = `
-        <span style="font-weight:700;">${iconMap[type] || 'ℹ'}</span>
-        <span style="flex:1;">${escapeHtml(message)}</span>
+        <span class="toast-icon-wrapper">${iconMap[type] || iconMap.info}</span>
+        <span class="toast-msg-text">${escapeHtml(message)}</span>
       `;
 
       this.container.appendChild(toast);
 
       setTimeout(() => {
         toast.style.opacity = '0';
-        toast.style.transform = 'translateX(20px)';
+        toast.style.transform = 'translateY(-10px) scale(0.96)';
         toast.style.transition = 'all 0.25s ease';
         setTimeout(() => toast.remove(), 250);
       }, durationMs);
@@ -284,7 +284,13 @@
         ToastManager.show(err.message, 'error');
         this.resultsContainer.innerHTML = `
           <div class="strata-card empty-state">
-            <div class="empty-state-icon" style="color:var(--accent-rose);">✕</div>
+            <div class="empty-state-icon" style="color:var(--accent-rose);">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="15" y1="9" x2="9" y2="15"/>
+                <line x1="9" y1="9" x2="15" y2="15"/>
+              </svg>
+            </div>
             <div class="empty-state-title">Retrieval Error</div>
             <p class="empty-state-desc">${escapeHtml(err.message)}</p>
           </div>
@@ -313,7 +319,7 @@
           cacheEl.textContent = 'HIT (Redis SHA-256)';
         } else {
           cacheEl.className = 'telemetry-val cache-miss';
-          cacheEl.textContent = 'MISS (Live Database)';
+          cacheEl.textContent = 'MISS (Live DB)';
         }
       }
 
@@ -340,7 +346,6 @@
       const escapedTerms = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       const pattern = new RegExp(`(${escapedTerms.join('|')})`, 'gi');
 
-      // Escape text first, then highlight
       const safe = escapeHtml(text);
       return safe.replace(pattern, '<mark>$1</mark>');
     },
@@ -350,7 +355,12 @@
       if (results.length === 0) {
         this.resultsContainer.innerHTML = `
           <div class="strata-card empty-state">
-            <div class="empty-state-icon">🔍</div>
+            <div class="empty-state-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="m21 21-4.35-4.35"/>
+              </svg>
+            </div>
             <div class="empty-state-title">No Matching Documents Found</div>
             <p class="empty-state-desc">Try adjusting your query, widening the Top-K parameter, or clearing the document scope filter.</p>
           </div>
@@ -362,7 +372,13 @@
       results.forEach((item, index) => {
         const rank = index + 1;
         const filename = item.filename || item.source_id || `document_${item.chunk_id}`;
-        const sourceExt = filename.includes('.') ? filename.split('.').pop() : 'DOC';
+        let sourceExt = 'DOC';
+        if (filename.includes('.')) {
+          sourceExt = filename.split('.').pop().toUpperCase();
+        } else if (filename.startsWith('http://') || filename.startsWith('https://')) {
+          sourceExt = 'URL';
+        }
+        const formatClass = `format-${sourceExt.toLowerCase()}`;
         const chunkIdx = item.chunk_index !== undefined ? item.chunk_index : index;
 
         const denseBadge = item.dense_rank !== null && item.dense_rank !== undefined
@@ -383,8 +399,8 @@
             <div class="result-card-header">
               <div class="result-meta-left">
                 <span class="rank-badge">#${rank}</span>
-                <span class="source-badge">${escapeHtml(sourceExt)}</span>
-                <span class="doc-name-chip">${escapeHtml(filename)}</span>
+                <span class="source-badge ${formatClass}">${escapeHtml(sourceExt)}</span>
+                <span class="doc-name-chip" title="${escapeHtml(filename)}">${escapeHtml(filename)}</span>
                 <span class="chunk-index-chip">[chunk #${chunkIdx}]</span>
               </div>
               <div class="result-scores-right">
@@ -396,7 +412,10 @@
             <div class="result-content-snippet">${snippet}</div>
             <div class="result-card-footer">
               <button type="button" class="btn-inspect-context" onclick="window.StrataApp.inspectContext(${index})">
-                <span>Inspect Full Context</span> ↗
+                <span>Inspect Full Context</span>
+                <svg class="icon-arrow" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 11L11 3M11 3H5M11 3V9"/>
+                </svg>
               </button>
             </div>
           </div>
@@ -600,14 +619,15 @@
 
       let html = '';
       this.stagedFiles.forEach((file, idx) => {
+        const ext = file.name.split('.').pop().toLowerCase();
         html += `
           <div class="staged-file-item">
             <div class="staged-file-info">
-              <span>📄</span>
-              <span style="font-weight:500;">${escapeHtml(file.name)}</span>
-              <span class="num-tabular" style="color:var(--text-muted); font-size:0.75rem;">(${formatBytes(file.size)})</span>
+              <span class="source-badge format-${escapeHtml(ext)}">${escapeHtml(ext.toUpperCase())}</span>
+              <span class="staged-file-name">${escapeHtml(file.name)}</span>
+              <span class="num-tabular staged-file-size">(${formatBytes(file.size)})</span>
             </div>
-            <button type="button" class="btn-remove-staged" onclick="window.StrataApp.removeStagedFile(${idx})" title="Remove">✕</button>
+            <button type="button" class="btn-remove-staged" onclick="window.StrataApp.removeStagedFile(${idx})" title="Remove" aria-label="Remove staged file">&times;</button>
           </div>
         `;
       });
@@ -832,6 +852,7 @@
         const docId = doc.doc_id || doc.id || '';
         const filename = doc.filename || 'Untitled';
         const sourceType = (doc.source_type || 'doc').toUpperCase();
+        const formatClass = `format-${sourceType.toLowerCase()}`;
         const sizeFormatted = formatBytes(doc.file_size_bytes);
         const chunkCount = doc.chunk_count !== undefined ? doc.chunk_count : 0;
         const dateFormatted = formatDate(doc.created_at);
@@ -841,25 +862,29 @@
             <td>
               <span class="status-badge ${status}">
                 <span class="status-dot"></span>
-                <span>${status}</span>
+                <span>${status.toUpperCase()}</span>
               </span>
             </td>
             <td>
-              <div style="display:flex; align-items:center; gap:0.5rem;">
-                <span class="source-badge">${escapeHtml(sourceType)}</span>
-                <span style="font-weight:500; color:var(--text-primary);">${escapeHtml(filename)}</span>
+              <div class="table-doc-cell">
+                <span class="source-badge ${formatClass}">${escapeHtml(sourceType)}</span>
+                <span class="table-doc-name" title="${escapeHtml(filename)}">${escapeHtml(filename)}</span>
               </div>
             </td>
             <td class="num-tabular">${sizeFormatted}</td>
             <td class="num-tabular">${chunkCount} chunks</td>
-            <td class="num-tabular" style="color:var(--text-muted); font-size:0.75rem;">${dateFormatted}</td>
+            <td class="num-tabular table-date-cell">${dateFormatted}</td>
             <td style="text-align: right;">
               <div class="table-actions" style="justify-content: flex-end;">
                 <button type="button" class="btn-table-action" onclick="window.StrataApp.filterInSearch('${escapeHtml(docId)}')" title="Search only this document">
                   <span>Scope</span>
                 </button>
-                <button type="button" class="btn-danger" onclick="window.StrataApp.promptDelete('${escapeHtml(docId)}', '${escapeHtml(filename)}')" title="Delete document">
-                  <span>✕</span>
+                <button type="button" class="btn-table-action-delete" onclick="window.StrataApp.promptDelete('${escapeHtml(docId)}', '${escapeHtml(filename)}')" title="Delete document">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:13px; height:13px;">
+                    <polyline points="2 4 4 4 14 4"/>
+                    <path d="M5 4V2.5A1.5 1.5 0 0 1 6.5 1h3A1.5 1.5 0 0 1 11 2.5V4"/>
+                    <path d="M13 4v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4"/>
+                  </svg>
                 </button>
               </div>
             </td>
