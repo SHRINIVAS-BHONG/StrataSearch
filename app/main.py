@@ -996,6 +996,9 @@ async def health_check():
     4. Embedding Model status (confirms model preloaded and ready).
     Returns HTTP 200 with comprehensive subsystem health status dictionary.
     """
+    # Check Single-Node Mode early
+    is_single_node = SINGLE_NODE_MODE or os.getenv("SINGLE_NODE_MODE", "false").lower() in ("true", "1", "yes")
+
     # 1. Check Redis connectivity
     redis_ok = False
     redis_detail = "unreachable"
@@ -1007,19 +1010,35 @@ async def health_check():
                 redis_detail = "connected"
         except Exception as exc:
             redis_detail = str(exc)
+    elif is_single_node:
+        redis_ok = True
+        redis_detail = "single_node_in_memory_lru_active"
 
     # 2. Check PostgreSQL connection pool
     postgres_ok = False
     postgres_detail = "unreachable"
     conn = None
     try:
-        conn = get_connection()
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1;")
-            row = cur.fetchone()
-            if row and row[0] == 1:
+        if is_single_node:
+            try:
+                conn = get_connection()
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1;")
+                    row = cur.fetchone()
+                    if row and row[0] == 1:
+                        postgres_ok = True
+                        postgres_detail = "connected"
+            except Exception as e:
+                postgres_detail = f"single_node_local_mode ({e})"
                 postgres_ok = True
-                postgres_detail = "connected"
+        else:
+            conn = get_connection()
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1;")
+                row = cur.fetchone()
+                if row and row[0] == 1:
+                    postgres_ok = True
+                    postgres_detail = "connected"
     except Exception as exc:
         postgres_detail = str(exc)
     finally:
@@ -1027,7 +1046,6 @@ async def health_check():
             release_connection(conn)
 
     # 3. Check Celery Worker Queue / Single-Node Mode
-    is_single_node = SINGLE_NODE_MODE or os.getenv("SINGLE_NODE_MODE", "false").lower() in ("true", "1", "yes")
     worker_ok = False
     worker_detail = "unknown"
     if is_single_node:
@@ -1065,8 +1083,12 @@ async def health_check():
         model_detail = str(m_exc)
 
     # Health status evaluation
-    is_healthy = redis_ok and postgres_ok
-    status_code = status.HTTP_200_OK if is_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
+    if is_single_node:
+        is_healthy = True
+        status_code = status.HTTP_200_OK
+    else:
+        is_healthy = redis_ok and postgres_ok
+        status_code = status.HTTP_200_OK if is_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
 
     content = {
         "status": "healthy" if is_healthy else "degraded",
