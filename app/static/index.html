@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StrataSearch — Enterprise Hybrid Retrieval & Document Intelligence</title>
+  <meta name="description" content="StrataSearch Enterprise Hybrid Retrieval and Document Intelligence Platform combining dense semantic search and sparse lexical retrieval via Reciprocal Rank Fusion.">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <!-- Top Navigation Bar -->
+  <header class="site-header">
+    <div class="header-inner">
+      <!-- Brand Logo & Identity -->
+      <div class="brand-wrapper">
+        <div class="brand-logo" aria-hidden="true">S</div>
+        <div class="brand-text">
+          <div class="brand-title">StrataSearch</div>
+          <div class="brand-subtitle">Enterprise Hybrid Retrieval & Document Intelligence</div>
+        </div>
+      </div>
+
+      <!-- Workspace Navigation Tabs -->
+      <nav class="workspace-nav" aria-label="Workspaces">
+        <button id="tab-btn-search" class="tab-btn active" data-tab="tab-search" type="button">
+          <span class="tab-icon">🔍</span>
+          <span>Search & Retrieval</span>
+          <span class="tab-hotkey" title="Shortcut: Alt+1">Alt+1</span>
+        </button>
+        <button id="tab-btn-knowledge" class="tab-btn" data-tab="tab-knowledge" type="button">
+          <span class="tab-icon">📚</span>
+          <span>Knowledge Base & Import</span>
+          <span class="tab-hotkey" title="Shortcut: Alt+2">Alt+2</span>
+        </button>
+        <button id="tab-btn-telemetry" class="tab-btn" data-tab="tab-telemetry" type="button">
+          <span class="tab-icon">⚡</span>
+          <span>System Telemetry</span>
+          <span class="tab-hotkey" title="Shortcut: Alt+3">Alt+3</span>
+        </button>
+      </nav>
+
+      <!-- Live Heartbeat & Corpus Counters -->
+      <div class="header-actions">
+        <div id="gateway-status-pill" class="status-pill operational" title="Gateway status indicator">
+          <span class="status-dot"></span>
+          <span id="gateway-status-text">Operational</span>
+        </div>
+        <div id="corpus-counter-badge" class="corpus-counter" title="Total indexed documents and chunks in corpus">
+          <span class="num-tabular" id="corpus-docs-count">0 Docs</span> · <span class="num-tabular" id="corpus-chunks-count">0 Chunks</span>
+        </div>
+        <a href="/docs" target="_blank" rel="noopener noreferrer" class="docs-link" title="Open FastAPI Interactive API Documentation">
+          <span>API Docs</span> ↗
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Workspaces Container -->
+  <main class="site-main">
+
+    <!-- Workspace 1: Search & Retrieval -->
+    <section id="tab-search" class="workspace-panel active" aria-labelledby="tab-btn-search">
+      <div class="search-workspace-container">
+        
+        <!-- Search Bar & Controls Card -->
+        <div class="search-bar-card">
+          <form id="search-form" class="search-form" onsubmit="return false;">
+            <div class="search-input-wrapper">
+              <span class="search-icon" aria-hidden="true">🔍</span>
+              <input 
+                type="text" 
+                id="search-query-input" 
+                class="search-main-input" 
+                placeholder="Enter semantic or keyword search query (e.g. quarterly revenue growth, authentication architecture)..." 
+                autocomplete="off"
+                spellcheck="false"
+                required
+              >
+              <div class="search-input-shortcuts">
+                <button type="button" id="clear-search-btn" class="clear-search-btn" title="Clear query" aria-label="Clear query">×</button>
+                <kbd class="shortcut-badge" title="Focus search bar">/</kbd>
+              </div>
+              <button type="submit" id="btn-search-exec" class="btn-primary btn-search-exec">
+                <span id="search-spinner" style="display:none;">⏳</span>
+                <span>Retrieve</span>
+              </button>
+            </div>
+
+            <!-- Retrieval Controls Grid -->
+            <div class="retrieval-controls-grid">
+              <!-- Retrieval Mode -->
+              <div class="control-item">
+                <label for="search-mode-select" class="control-label">Retrieval Mode</label>
+                <select id="search-mode-select" class="control-input">
+                  <option value="hybrid" selected>Hybrid (Dense HNSW + Sparse GIN RRF)</option>
+                  <option value="dense">Dense Only (pgvector HNSW Cosine)</option>
+                  <option value="sparse">Sparse Only (PostgreSQL GIN tsvector)</option>
+                </select>
+              </div>
+
+              <!-- Top-K Slider -->
+              <div class="control-item">
+                <div class="control-label">
+                  <span>Top-K Results</span>
+                  <span id="top-k-val" class="slider-value num-tabular">5</span>
+                </div>
+                <div class="slider-container">
+                  <input type="range" id="top-k-slider" class="slider-input" min="1" max="20" value="5" step="1">
+                </div>
+              </div>
+
+              <!-- RRF k parameter -->
+              <div class="control-item">
+                <label for="rrf-k-input" class="control-label">RRF Constant (k)</label>
+                <input type="number" id="rrf-k-input" class="control-input num-tabular" min="1" max="500" value="60">
+              </div>
+
+              <!-- Document Scope Filter -->
+              <div class="control-item">
+                <label for="scope-filter-select" class="control-label">Document Scope</label>
+                <select id="scope-filter-select" class="control-input">
+                  <option value="">All Indexed Documents</option>
+                </select>
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <!-- Execution Telemetry Strip -->
+        <div id="telemetry-strip" class="telemetry-strip" aria-live="polite">
+          <div class="telemetry-item">
+            <span class="telemetry-label">Latency:</span>
+            <span id="tel-latency" class="telemetry-val latency num-tabular">—</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="telemetry-label">Cache State:</span>
+            <span id="tel-cache" class="telemetry-val cache-miss">—</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="telemetry-label">Strategy:</span>
+            <span id="tel-strategy" class="telemetry-val strategy">—</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="telemetry-label">Hits Evaluated:</span>
+            <span id="tel-hits" class="telemetry-val num-tabular">—</span>
+          </div>
+        </div>
+
+        <!-- Search Results List -->
+        <div id="search-results-container" class="search-results-list" aria-live="polite">
+          <!-- Default Empty / Ready State -->
+          <div class="strata-card empty-state">
+            <div class="empty-state-icon">⚡</div>
+            <div class="empty-state-title">Ready for Retrieval</div>
+            <p class="empty-state-desc">Enter a query above to execute hybrid dense and sparse retrieval across your enterprise corpus.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Workspace 2: Knowledge Base & Import -->
+    <section id="tab-knowledge" class="workspace-panel" aria-labelledby="tab-btn-knowledge">
+      <div class="knowledge-workspace-container">
+        
+        <!-- Dual Ingestion Controls -->
+        <div class="ingestion-cards-grid">
+          
+          <!-- Card A: Multi-Format Drag & Drop Uploader -->
+          <div class="strata-card">
+            <div class="card-header">
+              <span class="card-title">📁 Multi-Format Document Ingestion</span>
+              <span class="status-badge queued">Max 25MB</span>
+            </div>
+            
+            <div id="drop-zone" class="dropzone-area" tabindex="0" role="button" aria-label="Drag and drop documents here or click to browse">
+              <div class="dropzone-icon">📥</div>
+              <div class="dropzone-label">Drop files here or click to browse</div>
+              <div class="dropzone-sub">Supported formats: PDF (with OCR), DOCX, TXT, MD, CSV</div>
+              <input type="file" id="file-input" multiple accept=".pdf,.docx,.txt,.md,.csv" style="display:none;">
+            </div>
+
+            <!-- Staged Files Preview List -->
+            <div id="staged-files-list" class="staged-files-list"></div>
+
+            <!-- Upload Action & Progress -->
+            <div class="upload-actions">
+              <button type="button" id="btn-clear-staged" class="btn-secondary" style="display:none;">Clear</button>
+              <button type="button" id="btn-upload-files" class="btn-primary" style="display:none;">Upload & Index Files</button>
+            </div>
+
+            <div id="upload-progress-wrapper" class="upload-progress-wrapper">
+              <div class="progress-bar-track">
+                <div id="upload-progress-bar" class="progress-bar-fill"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card B: Web URL Document Importer -->
+          <div class="strata-card">
+            <div class="card-header">
+              <span class="card-title">🌐 Web Article & Documentation Importer</span>
+              <span class="status-badge queued">Readability</span>
+            </div>
+
+            <form id="url-import-form" class="url-importer-form" onsubmit="return false;">
+              <div class="url-input-group">
+                <label for="url-input" class="control-label">Document Web URL</label>
+                <input 
+                  type="url" 
+                  id="url-input" 
+                  class="control-input" 
+                  placeholder="https://docs.enterprise.com/architecture-spec.html" 
+                  required
+                >
+                <p class="url-notes">
+                  StrataSearch extracts clean body content, automatically stripping headers, navigation sidebars, footers, scripts, and styling.
+                </p>
+              </div>
+
+              <div class="upload-actions">
+                <button type="submit" id="btn-url-import" class="btn-primary">
+                  <span id="url-spinner" style="display:none;">⏳</span>
+                  <span>Fetch & Index URL</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+        </div>
+
+        <!-- Document Library Table Card -->
+        <div class="strata-card library-card">
+          <div class="card-header">
+            <span class="card-title">📚 Document Registry Library</span>
+            <button type="button" id="btn-refresh-docs" class="btn-secondary" title="Refresh document list">
+              <span>↻ Refresh</span>
+            </button>
+          </div>
+
+          <!-- Filter Toolbar (Split-Flap Inspired) -->
+          <div class="library-toolbar">
+            <div class="filter-chips-group" role="tablist" aria-label="Status filter chips">
+              <button type="button" class="status-chip-btn active" data-status-filter="ALL">ALL (<span id="count-filter-all" class="num-tabular">0</span>)</button>
+              <button type="button" class="status-chip-btn" data-status-filter="INDEXED">INDEXED (<span id="count-filter-indexed" class="num-tabular">0</span>)</button>
+              <button type="button" class="status-chip-btn" data-status-filter="PROCESSING">PROCESSING (<span id="count-filter-processing" class="num-tabular">0</span>)</button>
+              <button type="button" class="status-chip-btn" data-status-filter="QUEUED">QUEUED (<span id="count-filter-queued" class="num-tabular">0</span>)</button>
+              <button type="button" class="status-chip-btn" data-status-filter="FAILED">FAILED (<span id="count-filter-failed" class="num-tabular">0</span>)</button>
+            </div>
+
+            <input 
+              type="text" 
+              id="table-search-input" 
+              class="table-search-input" 
+              placeholder="Filter by filename..." 
+              autocomplete="off"
+            >
+          </div>
+
+          <!-- Document Table -->
+          <div class="library-table-wrapper">
+            <table class="strata-table" id="doc-library-table">
+              <thead>
+                <tr>
+                  <th style="width: 130px;">Status</th>
+                  <th>Document Name</th>
+                  <th style="width: 100px;">Size</th>
+                  <th style="width: 100px;">Chunks</th>
+                  <th style="width: 160px;">Indexed Date</th>
+                  <th style="width: 160px; text-align: right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="doc-library-tbody">
+                <tr>
+                  <td colspan="6" class="empty-state">Loading document registry...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Workspace 3: System Telemetry -->
+    <section id="tab-telemetry" class="workspace-panel" aria-labelledby="tab-btn-telemetry">
+      <div class="telemetry-workspace-container">
+        
+        <!-- KPI Metrics Grid -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">Total Documents</div>
+            <div id="kpi-total-docs" class="kpi-value num-tabular">0</div>
+            <div class="kpi-sub">Indexed across formats</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Embedded Chunks</div>
+            <div id="kpi-total-chunks" class="kpi-value num-tabular">0</div>
+            <div class="kpi-sub">384-dimensional vectors</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Corpus Volume</div>
+            <div id="kpi-storage-vol" class="kpi-value num-tabular">0 KB</div>
+            <div class="kpi-sub">Extracted text footprint</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Query Latency Target</div>
+            <div id="kpi-avg-latency" class="kpi-value num-tabular" style="color:var(--accent-emerald);">&lt; 15 ms</div>
+            <div class="kpi-sub">With SHA-256 Redis cache</div>
+          </div>
+        </div>
+
+        <!-- Subsystem Health Cards Grid -->
+        <div class="subsystems-grid">
+          
+          <!-- PostgreSQL Card -->
+          <div class="subsystem-card" id="subsystem-postgres">
+            <div class="subsystem-header">
+              <div class="subsystem-name">
+                <span>🐘</span>
+                <span>PostgreSQL 16 & pgvector</span>
+              </div>
+              <span id="subsystem-status-postgres" class="subsystem-status-chip healthy">Active</span>
+            </div>
+            <div class="subsystem-metrics-list">
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Connection Pool:</span>
+                <span class="metric-val" id="metric-db-pool">ThreadedConnectionPool (2-20)</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Vector Index:</span>
+                <span class="metric-val">HNSW (m=16, ef_construction=64)</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Sparse Inverted Index:</span>
+                <span class="metric-val">GIN tsvector (English lexicon)</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Cascade Integrity:</span>
+                <span class="metric-val">ON DELETE CASCADE active</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Redis Card -->
+          <div class="subsystem-card" id="subsystem-redis">
+            <div class="subsystem-header">
+              <div class="subsystem-name">
+                <span>⚡</span>
+                <span>Redis Distributed Cache</span>
+              </div>
+              <span id="subsystem-status-redis" class="subsystem-status-chip healthy">Connected</span>
+            </div>
+            <div class="subsystem-metrics-list">
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Query Cache:</span>
+                <span class="metric-val">SHA-256 Deterministic Digest</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Cache TTL:</span>
+                <span class="metric-val">3,600 Seconds (1 Hour)</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Fallback Mode:</span>
+                <span class="metric-val">In-Memory Thread-Safe LRU</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Rate Limiter:</span>
+                <span class="metric-val">Sliding-Window IP Throttling</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Celery Worker Card -->
+          <div class="subsystem-card" id="subsystem-celery">
+            <div class="subsystem-header">
+              <div class="subsystem-name">
+                <span>⚙️</span>
+                <span>Celery Ingestion Queue</span>
+              </div>
+              <span id="subsystem-status-celery" class="subsystem-status-chip healthy">Operational</span>
+            </div>
+            <div class="subsystem-metrics-list">
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Task Pipeline:</span>
+                <span class="metric-val">ingest_document_task</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">OCR Fallback:</span>
+                <span class="metric-val">200-DPI pytesseract</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Batch Insertion:</span>
+                <span class="metric-val">execute_values (64 chunks/batch)</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Single Node Fallback:</span>
+                <span class="metric-val">Synchronous in-process execution</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Embedding Engine Card -->
+          <div class="subsystem-card" id="subsystem-embedder">
+            <div class="subsystem-header">
+              <div class="subsystem-name">
+                <span>🧠</span>
+                <span>Neural Embedding Engine</span>
+              </div>
+              <span id="subsystem-status-embedder" class="subsystem-status-chip healthy">Pre-Warmed</span>
+            </div>
+            <div class="subsystem-metrics-list">
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Architecture:</span>
+                <span class="metric-val">all-MiniLM-L6-v2</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Dimensions:</span>
+                <span class="metric-val">384 Float32</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Normalization:</span>
+                <span class="metric-val">L2 (Euclidean Unit Sphere)</span>
+              </div>
+              <div class="subsystem-metric-row">
+                <span class="metric-key">Cold-Start Status:</span>
+                <span class="metric-val">Pre-Loaded at Startup</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Telemetry Actions Card -->
+        <div class="strata-card telemetry-actions-card">
+          <div class="telemetry-actions-info">
+            <div class="card-title">Cache & Diagnostics Maintenance</div>
+            <p style="font-size:0.8125rem; color:var(--text-secondary);">
+              Purge active search cache keys across Redis and in-memory LRU storage, or trigger diagnostic health checks.
+            </p>
+          </div>
+          <div class="telemetry-actions-btns">
+            <button type="button" id="btn-probe-health" class="btn-secondary">
+              <span>🩺 Probe Health</span>
+            </button>
+            <button type="button" id="btn-purge-cache" class="btn-danger">
+              <span>🗑️ Invalidate Cache</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- cURL Integration Code Snippets -->
+        <div class="strata-card">
+          <div class="card-header">
+            <span class="card-title">💻 Enterprise API cURL Integration</span>
+          </div>
+
+          <div class="curl-tabs-header">
+            <button type="button" class="curl-tab-btn active" data-curl="search">Search API</button>
+            <button type="button" class="curl-tab-btn" data-curl="upload">Upload Documents</button>
+            <button type="button" class="curl-tab-btn" data-curl="url">Ingest URL</button>
+            <button type="button" class="curl-tab-btn" data-curl="health">Health Check</button>
+          </div>
+
+          <div class="curl-code-box">
+            <button type="button" id="btn-copy-curl" class="btn-copy-curl">Copy cURL</button>
+            <pre><code id="curl-snippet-code"># Hybrid RRF Search
+curl -X POST "http://localhost:8000/api/v1/search" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "quarterly revenue metrics", "top_k": 5, "mode": "hybrid", "rrf_k": 60}'</code></pre>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Full Context Inspection Modal -->
+  <div id="modal-chunk-context" class="strata-modal-overlay" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="strata-modal-card">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-chunk-title">Chunk Context Inspector</div>
+        <button type="button" id="btn-close-context-modal" class="btn-close-modal" aria-label="Close modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom:0.75rem; font-family:var(--font-mono); font-size:0.75rem; color:var(--text-brand);" id="modal-chunk-meta"></div>
+        <div id="modal-chunk-text" style="white-space:pre-wrap; line-height:1.7;"></div>
+        <div class="raw-json-block">
+          <pre><code id="modal-chunk-json"></code></pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-dismiss-context" class="btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Document Confirmation Modal -->
+  <div id="modal-delete-confirm" class="strata-modal-overlay" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="strata-modal-card" style="max-width: 460px;">
+      <div class="modal-header">
+        <div class="modal-title">Delete Document & Vectors</div>
+        <button type="button" id="btn-close-delete-modal" class="btn-close-modal" aria-label="Close modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to delete <strong id="delete-doc-name" style="color:var(--text-primary);"></strong>?</p>
+        <p style="margin-top:0.5rem; font-size:0.8125rem; color:var(--accent-rose);">
+          ⚠️ This will trigger an <code>ON DELETE CASCADE</code> purge, deleting the document metadata and all associated embeddings and chunk vectors from PostgreSQL and pgvector.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-delete" class="btn-secondary">Cancel</button>
+        <button type="button" id="btn-confirm-delete" class="btn-danger">Delete Permanently</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+</body>
+</html>

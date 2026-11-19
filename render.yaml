@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: stratasearch
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: SINGLE_NODE_MODE
+        value: "true"
+      - key: PORT
+        value: "8000"
+      - key: EMBEDDING_MODEL
+        value: "all-MiniLM-L6-v2"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stratasearch-db
+          property: connectionString
+
+databases:
+  - name: stratasearch-db
+    databaseName: stratasearch
+    user: stratasearch
+    plan: starter

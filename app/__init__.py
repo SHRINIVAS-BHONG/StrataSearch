@@ -1,0 +1,3 @@
+"""
+StrataSearch application package.
+"""
