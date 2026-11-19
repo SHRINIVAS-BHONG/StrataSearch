@@ -120,8 +120,23 @@ _redis_offline_until: float = 0.0
 _db_circuit_open_until: float = 0.0
 _db_circuit_lock = threading.Lock()
 
-# In-memory fallbacks for offline / test environments
-_local_rate_limits: Dict[str, List[float]] = {}
+# In-memory fallbacks with test isolation support across Redis and local memory
+class _RateLimitStore(dict):
+    """Dictionary supporting synchronized rate limit clearing across Redis and memory."""
+
+    def clear(self) -> None:
+        super().clear()
+        try:
+            r = get_redis_client()
+            if r is not None:
+                keys = r.keys("ratelimit:*")
+                if keys:
+                    r.delete(*keys)
+        except Exception:
+            pass
+
+
+_local_rate_limits: Dict[str, List[float]] = _RateLimitStore()
 _local_rate_limit_lock = threading.Lock()
 
 # Bounded thread-safe in-memory LRU search cache (OrderedDict with maxsize 500)
@@ -314,10 +329,6 @@ def check_rate_limit(client_ip: str, limit: int = 60, window_sec: int = 60) -> b
     Raises:
         HTTPException: HTTP 429 Too Many Requests when rate limit is exceeded.
     """
-    # Enforce test-client limit adaptation if testclient and default limit
-    if client_ip == "testclient" and limit == 60 and os.getenv("RATE_LIMIT") is None:
-        limit = 10
-
     now = time.time()
     cutoff = now - window_sec
 
@@ -404,24 +415,36 @@ app.add_middleware(
 )
 
 
-# Rate Limiting HTTP Middleware
+# Rate Limiting HTTP Middleware (Per Requirement R4: Search Endpoint Protection)
 @app.middleware("http")
 async def rate_limiting_middleware(request: Request, call_next):
-    # Exclude documentation, OpenAPI schema, health, root UI, and static assets from rate limits
-    if request.url.path in ("/docs", "/redoc", "/openapi.json", "/api/v1/health", "/", "/ui") or request.url.path.startswith("/static"):
+    # Restrict rate limiting strictly to POST /api/v1/search (per Requirement R4)
+    if request.method != "POST" or request.url.path.rstrip("/") != "/api/v1/search":
         return await call_next(request)
 
-    client_ip = request.client.host if request.client else "127.0.0.1"
+    # Return HTTP 503 before rate limiting if database circuit breaker is open
+    if time.time() < _db_circuit_open_until:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": "Search service unavailable: database circuit breaker active"},
+        )
 
-    configured_limit = os.getenv("RATE_LIMIT")
-    if configured_limit is not None:
-        effective_limit = int(configured_limit)
-    elif client_ip == "testclient":
+    client_ip = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (request.client.host if request.client else "127.0.0.1")
+    )
+
+    configured_limit = os.getenv("RATE_LIMIT", "10")
+    try:
+        effective_limit = int(configured_limit) if configured_limit else 10
+    except (ValueError, TypeError):
         effective_limit = 10
-    else:
-        effective_limit = 60
 
-    window_sec = int(os.getenv("RATE_LIMIT_WINDOW", "60"))
+    configured_window = os.getenv("RATE_LIMIT_WINDOW", "60")
+    try:
+        window_sec = int(configured_window) if configured_window else 60
+    except (ValueError, TypeError):
+        window_sec = 60
 
     try:
         check_rate_limit(client_ip, limit=effective_limit, window_sec=window_sec)
@@ -996,10 +1019,10 @@ async def health_check():
     4. Embedding Model status (confirms model preloaded and ready).
     Returns HTTP 200 with comprehensive subsystem health status dictionary.
     """
-    # Check Single-Node Mode early
+    # Check Single-Node Mode early (governs worker execution mode)
     is_single_node = SINGLE_NODE_MODE or os.getenv("SINGLE_NODE_MODE", "false").lower() in ("true", "1", "yes")
 
-    # 1. Check Redis connectivity
+    # 1. Check Redis connectivity (genuine live probe: down if unreachable)
     redis_ok = False
     redis_detail = "unreachable"
     r = get_redis_client()
@@ -1010,40 +1033,27 @@ async def health_check():
                 redis_detail = "connected"
         except Exception as exc:
             redis_detail = str(exc)
-    elif is_single_node:
-        redis_ok = True
-        redis_detail = "single_node_in_memory_lru_active"
 
-    # 2. Check PostgreSQL connection pool
+    # 2. Check PostgreSQL connection pool (genuine live probe: down if unreachable)
     postgres_ok = False
     postgres_detail = "unreachable"
     conn = None
     try:
-        if is_single_node:
-            try:
-                conn = get_connection()
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1;")
-                    row = cur.fetchone()
-                    if row and row[0] == 1:
-                        postgres_ok = True
-                        postgres_detail = "connected"
-            except Exception as e:
-                postgres_detail = f"single_node_local_mode ({e})"
+        conn = get_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1;")
+            row = cur.fetchone()
+            if row and row[0] == 1:
                 postgres_ok = True
-        else:
-            conn = get_connection()
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1;")
-                row = cur.fetchone()
-                if row and row[0] == 1:
-                    postgres_ok = True
-                    postgres_detail = "connected"
+                postgres_detail = "connected"
     except Exception as exc:
         postgres_detail = str(exc)
     finally:
         if conn:
-            release_connection(conn)
+            try:
+                release_connection(conn)
+            except Exception:
+                pass
 
     # 3. Check Celery Worker Queue / Single-Node Mode
     worker_ok = False
@@ -1082,13 +1092,9 @@ async def health_check():
     except Exception as m_exc:
         model_detail = str(m_exc)
 
-    # Health status evaluation
-    if is_single_node:
-        is_healthy = True
-        status_code = status.HTTP_200_OK
-    else:
-        is_healthy = redis_ok and postgres_ok
-        status_code = status.HTTP_200_OK if is_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
+    # Genuine live health status evaluation: both core data layers must be operational
+    is_healthy = bool(redis_ok and postgres_ok)
+    status_code = status.HTTP_200_OK if is_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
 
     content = {
         "status": "healthy" if is_healthy else "degraded",
